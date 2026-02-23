@@ -34,7 +34,7 @@ function getLocalIP() {
 }
 
 // ── Tunnel state ──
-let tunnelUrl = null;
+let tunnelUrl = process.env.TUNNEL_URL || null;
 
 // ── Game state ──
 let players = [];        // { id, name, score, currentAnswer, answered }
@@ -60,10 +60,14 @@ app.get('/api/info', async (req, res) => {
     const qrTarget = buildPlayerUrl(socketBase);
     const localPlayerUrl = buildPlayerUrl(localBase);
     try {
-        const qr = await QRCode.toDataURL(qrTarget, { width: 300, margin: 2, color: { dark: '#f5c518', light: '#06081a' } });
-        res.json({ qr, url: qrTarget, localUrl: localPlayerUrl, publicUrl: tunnelUrl ? buildPlayerUrl(tunnelUrl) : null, ip, port: PORT });
+        const qrOpts = { width: 300, margin: 2, color: { dark: '#f5c518', light: '#06081a' } };
+        const qr = await QRCode.toDataURL(qrTarget, qrOpts);
+        const localQr = (qrTarget !== localPlayerUrl)
+            ? await QRCode.toDataURL(localPlayerUrl, qrOpts)
+            : qr;
+        res.json({ qr, localQr, url: qrTarget, localUrl: localPlayerUrl, publicUrl: tunnelUrl ? buildPlayerUrl(tunnelUrl) : null, ip, port: PORT });
     } catch (e) {
-        res.json({ qr: null, url: qrTarget, localUrl: localPlayerUrl, publicUrl: null, ip, port: PORT });
+        res.json({ qr: null, localQr: null, url: qrTarget, localUrl: localPlayerUrl, publicUrl: null, ip, port: PORT });
     }
 });
 
@@ -273,27 +277,33 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.log('  ╚══════════════════════════════════════════════╝');
     console.log('');
 
-    // Try to open a public tunnel so players on any network can join
-    try {
-        const localtunnel = require('localtunnel');
-        const tunnel = await localtunnel({ port: PORT });
-        tunnelUrl = tunnel.url;
+    // If a tunnel URL was provided via env, announce it immediately
+    if (tunnelUrl) {
         const publicPlayerUrl = buildPlayerUrl(tunnelUrl);
         console.log(`  🌐 Public player URL: ${publicPlayerUrl}`);
         console.log('     (Works over any internet connection)');
         console.log('');
-        // Notify already-connected host screens about the new URL
-        io.emit('tunnel-ready', { publicUrl: publicPlayerUrl });
+    } else {
+        // Try to open a public tunnel so players on any network can join
+        try {
+            const localtunnel = require('localtunnel');
+            const lt = await Promise.race([
+                localtunnel({ port: PORT }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
+            ]);
+            tunnelUrl = lt.url;
+            const publicPlayerUrl = buildPlayerUrl(tunnelUrl);
+            console.log(`  🌐 Public player URL: ${publicPlayerUrl}`);
+            console.log('     (Works over any internet connection)');
+            console.log('');
+            io.emit('tunnel-ready', { publicUrl: publicPlayerUrl });
 
-        tunnel.on('close', () => {
-            tunnelUrl = null;
-            console.log('  ⚡ Public tunnel closed');
-        });
-        tunnel.on('error', () => { tunnelUrl = null; });
-    } catch (e) {
-        console.log('  ⚠️  Could not open public tunnel.');
-        console.log('     Players must be on the same WiFi network.');
-        console.log('     (Run `npm install` to enable tunnel support)');
-        console.log('');
+            lt.on('close', () => { tunnelUrl = null; console.log('  ⚡ Public tunnel closed'); });
+            lt.on('error', () => { tunnelUrl = null; });
+        } catch (e) {
+            console.log('  ⚠️  Could not open public tunnel (start with TUNNEL_URL=... for cross-network play).');
+            console.log('     Players must be on the same WiFi network.');
+            console.log('');
+        }
     }
 });

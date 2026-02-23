@@ -51,6 +51,10 @@
         .qr-tunnel-badge { display: inline-block; font-size: 0.6rem; background: rgba(0,230,118,0.15); color: var(--correct); border: 1px solid rgba(0,230,118,0.3); border-radius: 10px; padding: 2px 8px; margin-left: 6px; vertical-align: middle; }
         .qr-count { margin-top: 10px; font-size: 0.85rem; color: var(--text-dim); }
         .qr-count span { color: var(--accent-gold); font-weight: 900; font-size: 1.1rem; }
+        .qr-toggle { display: flex; gap: 6px; margin-top: 10px; }
+        .qr-toggle button { font-family: var(--font); font-size: 0.65rem; font-weight: 700; padding: 4px 12px; border-radius: 20px; border: 1px solid var(--blue); background: transparent; color: var(--text-dim); cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: all 0.2s; }
+        .qr-toggle button.active { background: var(--blue); color: var(--text); border-color: var(--blue-light); }
+        .qr-toggle button.lan-active { background: rgba(0,230,118,0.15); color: var(--correct); border-color: var(--correct); }
 
         .rules-box { background: var(--bg-card); border: 2px solid var(--blue); border-radius: 16px; padding: 18px 24px; max-width: 600px; width: 100%; }
         .rules-box h3 { font-size: 0.85rem; color: var(--accent-gold); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; }
@@ -291,6 +295,10 @@
                     <div class="qr-url public" id="publicUrl"></div>
                 </div>
                 <div class="qr-count"><span id="totalPlayers">0</span> players connected</div>
+                <div class="qr-toggle" id="qrToggle" style="display:none">
+                    <button id="btnPublicQR" class="active" onclick="switchQR('public')">Public</button>
+                    <button id="btnLanQR" onclick="switchQR('lan')">LAN (same WiFi)</button>
+                </div>
             </div>
         </div>
         <div class="rules-box">
@@ -483,6 +491,10 @@ function toggleFullscreen() { if (!document.fullscreenElement) document.document
 /* =========================================================
    QR CODE + ROSTER
    ========================================================= */
+let _qrPublic = null;
+let _qrLan = null;
+let _qrMode = 'public'; // 'public' | 'lan'
+
 function setQRImage(qrDataUrl) {
     const img = document.getElementById('qrImage');
     img.onload = () => {
@@ -496,20 +508,32 @@ function setQRImage(qrDataUrl) {
     img.src = qrDataUrl;
 }
 
+function switchQR(mode) {
+    _qrMode = mode;
+    document.getElementById('btnPublicQR').className = mode === 'public' ? 'active' : '';
+    document.getElementById('btnLanQR').className = mode === 'lan' ? 'lan-active' : '';
+    const qr = mode === 'lan' ? _qrLan : _qrPublic;
+    if (qr) setQRImage(qr);
+}
+
 function loadQR(attempt) {
     fetch('/api/info')
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(data => {
+            _qrPublic = data.qr || null;
+            _qrLan = data.localQr || data.qr || null;
             // Show LAN URL
             document.getElementById('joinUrl').textContent = data.localUrl || data.url || 'Unknown URL';
             // Show public URL if tunnel already ready
             if (data.publicUrl) {
-                document.getElementById('publicUrl').textContent = data.publicUrl + '/player.html';
+                document.getElementById('publicUrl').textContent = data.publicUrl;
                 document.getElementById('publicUrlSection').style.display = 'block';
                 document.getElementById('urlLabelLan').textContent = 'LAN (same WiFi)';
+                document.getElementById('qrToggle').style.display = 'flex';
             }
-            if (data.qr) {
-                setQRImage(data.qr);
+            const activeQr = _qrMode === 'lan' ? _qrLan : _qrPublic;
+            if (activeQr) {
+                setQRImage(activeQr);
             } else {
                 document.getElementById('qrStatus').textContent = 'QR unavailable';
                 document.getElementById('qrStatus').classList.add('error');
@@ -517,14 +541,12 @@ function loadQR(attempt) {
         })
         .catch(() => {
             if (attempt < 5) {
-                // Retry up to 5 times with 1s delay (server may still be starting)
                 document.getElementById('qrStatus').textContent = `Retrying... (${attempt + 1}/5)`;
                 setTimeout(() => loadQR(attempt + 1), 1000);
             } else {
                 document.getElementById('qrStatus').textContent = 'Server not reachable.\nRun: node server.js';
                 document.getElementById('qrStatus').classList.add('error');
                 document.getElementById('joinUrl').textContent = 'Start server first';
-                // Stop spinner
                 const spinner = document.querySelector('.qr-spinner');
                 if (spinner) spinner.style.display = 'none';
             }
@@ -537,7 +559,7 @@ socket.on('tunnel-ready', ({ publicUrl }) => {
     document.getElementById('publicUrl').textContent = publicUrl;
     document.getElementById('publicUrlSection').style.display = 'block';
     document.getElementById('urlLabelLan').textContent = 'LAN (same WiFi)';
-    // Refresh QR to use the public URL (better for players on different networks)
+    document.getElementById('qrToggle').style.display = 'flex';
     loadQR(0);
 });
 
