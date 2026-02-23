@@ -239,13 +239,19 @@
 
 <script src="https://cdn.socket.io/4.8.0/socket.io.min.js"></script>
 <script>
-/* ── Connect to server (host URL from ?host= param or same origin) ── */
+/* ── Connect to server ── */
 const _params = new URLSearchParams(window.location.search);
-let _serverUrl = _params.get('host');
+let _serverUrl = _params.get('host') || null;
+let _fallbackUrl = _params.get('fallback') || null;
 if (_serverUrl && !_serverUrl.startsWith('http')) _serverUrl = 'http://' + _serverUrl;
-const socket = _serverUrl
-    ? io(_serverUrl, { transports: ['polling', 'websocket'], reconnectionAttempts: 5, timeout: 10000 })
-    : io({ reconnectionAttempts: 5, timeout: 10000 });
+if (_fallbackUrl && !_fallbackUrl.startsWith('http')) _fallbackUrl = 'http://' + _fallbackUrl;
+
+let _usingFallback = false;
+let _triedFallback = false;
+
+const socket = (_serverUrl || _fallbackUrl)
+    ? io(_serverUrl || _fallbackUrl, { transports: ['polling', 'websocket'], reconnectionAttempts: 4, timeout: 8000 })
+    : io({ reconnectionAttempts: 4, timeout: 8000 });
 
 /* ── Connection status ── */
 function setConnStatus(state, msg) {
@@ -255,9 +261,8 @@ function setConnStatus(state, msg) {
 }
 
 socket.on('connect', () => {
-    setConnStatus('connected', 'Connected');
+    setConnStatus('connected', _usingFallback ? 'Connected (local WiFi)' : 'Connected');
     document.getElementById('nameInput').disabled = false;
-    // Re-enable join button if name is already filled
     if (document.getElementById('nameInput').value.trim()) {
         document.getElementById('goBtn').disabled = false;
     }
@@ -268,17 +273,20 @@ socket.on('disconnect', () => {
 });
 
 socket.on('connect_error', () => {
+    // If primary (tunnel) failed and we have a LAN fallback, switch to it
+    if (!_triedFallback && _fallbackUrl && _serverUrl) {
+        _triedFallback = true;
+        _usingFallback = true;
+        setConnStatus('connecting', 'Trying local network...');
+        // Change manager URL to LAN fallback and reconnect on same socket instance
+        socket.io.uri = _fallbackUrl;
+        socket.io.reconnectionAttempts(4);
+        socket.connect();
+        return;
+    }
     setConnStatus('failed', 'Cannot reach server — check the QR code link');
     document.getElementById('nameInput').disabled = true;
     document.getElementById('goBtn').disabled = true;
-});
-
-socket.on('reconnect', () => {
-    setConnStatus('connected', 'Connected');
-    document.getElementById('nameInput').disabled = false;
-    if (document.getElementById('nameInput').value.trim()) {
-        document.getElementById('goBtn').disabled = false;
-    }
 });
 
 socket.on('reconnect_failed', () => {

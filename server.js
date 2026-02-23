@@ -43,10 +43,15 @@ let questionRevealed = false;
 let currentQuestion = null;
 let joinLocked = false;
 
-// Build the player URL: GitHub Pages + ?host= param (preferred) or local URL
-function buildPlayerUrl(socketBase) {
+// Build the player URL with optional LAN fallback embedded
+function buildPlayerUrl(socketBase, lanBase) {
     if (GITHUB_PAGES_URL) {
-        return `${GITHUB_PAGES_URL}?host=${encodeURIComponent(socketBase)}`;
+        let url = `${GITHUB_PAGES_URL}?host=${encodeURIComponent(socketBase)}`;
+        // Embed LAN fallback so player page can auto-retry on same WiFi
+        if (lanBase && lanBase !== socketBase) {
+            url += `&fallback=${encodeURIComponent(lanBase)}`;
+        }
+        return url;
     }
     return `${socketBase}/player.html`;
 }
@@ -57,7 +62,9 @@ app.get('/api/info', async (req, res) => {
     const localBase = `http://${ip}:${PORT}`;
     // Use tunnel as socket base if available, else LAN
     const socketBase = tunnelUrl || localBase;
-    const qrTarget = buildPlayerUrl(socketBase);
+    const lanBase = localBase;
+    // Main QR: tunnel URL + LAN fallback embedded; LAN QR: LAN URL only
+    const qrTarget = buildPlayerUrl(socketBase, tunnelUrl ? lanBase : null);
     const localPlayerUrl = buildPlayerUrl(localBase);
     try {
         const qrOpts = { width: 300, margin: 2, color: { dark: '#f5c518', light: '#06081a' } };
