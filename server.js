@@ -9,11 +9,17 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: '*', methods: ['GET', 'POST'] }
 });
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // ── GitHub Pages URL for the player page (enables cross-network play) ──
 // Players load the HTML from GitHub Pages, socket.io connects back to this server.
 const GITHUB_PAGES_URL = 'https://crstntaro.github.io/WhoWantsToBeAMillionaire/public/player.html';
+
+// ── Cloud public URL (set automatically on Railway, or manually via PUBLIC_URL env) ──
+// When set, no tunnel is needed — the server IS already public.
+const CLOUD_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : (process.env.PUBLIC_URL || null);
 
 app.use(express.static('public'));
 
@@ -33,8 +39,8 @@ function getLocalIP() {
     return 'localhost';
 }
 
-// ── Tunnel state ──
-let tunnelUrl = process.env.TUNNEL_URL || null;
+// ── Tunnel state (not needed when CLOUD_URL is set) ──
+let tunnelUrl = CLOUD_URL || process.env.TUNNEL_URL || null;
 
 // ── Game state ──
 let players = [];        // { id, name, score, currentAnswer, answered }
@@ -277,40 +283,49 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.log('  ╔══════════════════════════════════════════════╗');
     console.log('  ║   WHO WANTS TO BE A MILLIONAIRE? - SERVER   ║');
     console.log('  ╠══════════════════════════════════════════════╣');
-    console.log(`  ║  Host:    http://localhost:${PORT}              ║`);
-    console.log(`  ║  LAN:     http://${ip}:${PORT}/player.html  ║`);
-    console.log('  ╠══════════════════════════════════════════════╣');
-    console.log('  ║  Starting public tunnel (any network)...    ║');
-    console.log('  ╚══════════════════════════════════════════════╝');
-    console.log('');
 
-    // If a tunnel URL was provided via env, announce it immediately
-    if (tunnelUrl) {
-        const publicPlayerUrl = buildPlayerUrl(tunnelUrl);
-        console.log(`  🌐 Public player URL: ${publicPlayerUrl}`);
-        console.log('     (Works over any internet connection)');
+    if (CLOUD_URL) {
+        // Running in cloud — server is already public, no tunnel needed
+        console.log(`  ║  Cloud URL: ${CLOUD_URL.padEnd(33)}║`);
+        const publicPlayerUrl = buildPlayerUrl(CLOUD_URL);
+        console.log(`  ║  Player:    GitHub Pages + ?host=cloud     ║`);
+        console.log('  ╚══════════════════════════════════════════════╝');
+        console.log('');
+        console.log(`  🌐 Public player URL:`);
+        console.log(`     ${publicPlayerUrl}`);
         console.log('');
     } else {
-        // Try to open a public tunnel so players on any network can join
-        try {
-            const localtunnel = require('localtunnel');
-            const lt = await Promise.race([
-                localtunnel({ port: PORT }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
-            ]);
-            tunnelUrl = lt.url;
-            const publicPlayerUrl = buildPlayerUrl(tunnelUrl);
-            console.log(`  🌐 Public player URL: ${publicPlayerUrl}`);
-            console.log('     (Works over any internet connection)');
-            console.log('');
-            io.emit('tunnel-ready', { publicUrl: publicPlayerUrl });
+        console.log(`  ║  Host:    http://localhost:${PORT}              ║`);
+        console.log(`  ║  LAN:     http://${ip}:${PORT}              ║`);
+        console.log('  ╠══════════════════════════════════════════════╣');
+        console.log('  ║  Starting public tunnel (any network)...    ║');
+        console.log('  ╚══════════════════════════════════════════════╝');
+        console.log('');
 
-            lt.on('close', () => { tunnelUrl = null; console.log('  ⚡ Public tunnel closed'); });
-            lt.on('error', () => { tunnelUrl = null; });
-        } catch (e) {
-            console.log('  ⚠️  Could not open public tunnel (start with TUNNEL_URL=... for cross-network play).');
-            console.log('     Players must be on the same WiFi network.');
+        if (tunnelUrl) {
+            // TUNNEL_URL provided manually
+            const publicPlayerUrl = buildPlayerUrl(tunnelUrl, `http://${ip}:${PORT}`);
+            console.log(`  🌐 Public player URL: ${publicPlayerUrl}`);
             console.log('');
+        } else {
+            // Try localtunnel as last resort
+            try {
+                const localtunnel = require('localtunnel');
+                const lt = await Promise.race([
+                    localtunnel({ port: PORT }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
+                ]);
+                tunnelUrl = lt.url;
+                const publicPlayerUrl = buildPlayerUrl(tunnelUrl, `http://${ip}:${PORT}`);
+                console.log(`  🌐 Public player URL: ${publicPlayerUrl}`);
+                console.log('');
+                io.emit('tunnel-ready', { publicUrl: publicPlayerUrl });
+                lt.on('close', () => { tunnelUrl = null; });
+                lt.on('error', () => { tunnelUrl = null; });
+            } catch (e) {
+                console.log('  ⚠️  No public tunnel. Players must be on the same WiFi.');
+                console.log('');
+            }
         }
     }
 });
