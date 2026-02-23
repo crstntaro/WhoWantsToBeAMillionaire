@@ -31,6 +31,10 @@
         .go-btn { padding: 14px 48px; border: 2px solid var(--gold); border-radius: 50px; background: transparent; color: var(--gold); font-family: var(--font); font-size: 1rem; font-weight: 700; cursor: pointer; transition: all 0.3s; text-transform: uppercase; letter-spacing: 2px; }
         .go-btn:hover:not(:disabled) { background: var(--gold); color: var(--bg); box-shadow: 0 0 30px rgba(245,197,24,0.4); }
         .go-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .conn-status { font-size: 0.75rem; text-align: center; padding: 6px 14px; border-radius: 20px; }
+        .conn-status.connecting { color: var(--amber); background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); animation: pulse 1.5s ease infinite; }
+        .conn-status.connected { color: var(--green); background: rgba(0,230,118,0.08); border: 1px solid rgba(0,230,118,0.2); }
+        .conn-status.failed { color: var(--red); background: rgba(255,23,68,0.1); border: 1px solid rgba(255,23,68,0.3); }
 
         /* ===== LOBBY ===== */
         .lobby-title { font-size: 1.3rem; font-weight: 900; color: var(--gold); }
@@ -155,7 +159,8 @@
     <div class="screen active" id="joinScreen">
         <div class="join-title">Who Wants to Be<br>a Millionaire?</div>
         <div class="join-sub">Enter your name to join</div>
-        <input class="join-input" id="nameInput" type="text" placeholder="Your Name" maxlength="20" autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false">
+        <div class="conn-status connecting" id="connStatus">Connecting to server...</div>
+        <input class="join-input" id="nameInput" type="text" placeholder="Your Name" maxlength="20" autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false" disabled>
         <div class="join-error" id="joinError"></div>
         <button class="go-btn" id="goBtn" disabled onclick="joinGame()">Join Game</button>
     </div>
@@ -238,7 +243,47 @@
 const _params = new URLSearchParams(window.location.search);
 let _serverUrl = _params.get('host');
 if (_serverUrl && !_serverUrl.startsWith('http')) _serverUrl = 'http://' + _serverUrl;
-const socket = _serverUrl ? io(_serverUrl, { transports: ['websocket', 'polling'] }) : io();
+const socket = _serverUrl
+    ? io(_serverUrl, { transports: ['polling', 'websocket'], reconnectionAttempts: 5, timeout: 10000 })
+    : io({ reconnectionAttempts: 5, timeout: 10000 });
+
+/* ── Connection status ── */
+function setConnStatus(state, msg) {
+    const el = document.getElementById('connStatus');
+    el.className = 'conn-status ' + state;
+    el.textContent = msg;
+}
+
+socket.on('connect', () => {
+    setConnStatus('connected', 'Connected');
+    document.getElementById('nameInput').disabled = false;
+    // Re-enable join button if name is already filled
+    if (document.getElementById('nameInput').value.trim()) {
+        document.getElementById('goBtn').disabled = false;
+    }
+});
+
+socket.on('disconnect', () => {
+    if (!myName) setConnStatus('connecting', 'Reconnecting...');
+});
+
+socket.on('connect_error', () => {
+    setConnStatus('failed', 'Cannot reach server — check the QR code link');
+    document.getElementById('nameInput').disabled = true;
+    document.getElementById('goBtn').disabled = true;
+});
+
+socket.on('reconnect', () => {
+    setConnStatus('connected', 'Connected');
+    document.getElementById('nameInput').disabled = false;
+    if (document.getElementById('nameInput').value.trim()) {
+        document.getElementById('goBtn').disabled = false;
+    }
+});
+
+socket.on('reconnect_failed', () => {
+    setConnStatus('failed', 'Cannot reach server — check the QR code link');
+});
 
 /* ── State ── */
 let myName = '';
@@ -255,7 +300,8 @@ function showScreen(id) {
 
 /* ── Join flow ── */
 document.getElementById('nameInput').addEventListener('input', () => {
-    document.getElementById('goBtn').disabled = !document.getElementById('nameInput').value.trim();
+    document.getElementById('goBtn').disabled =
+        !document.getElementById('nameInput').value.trim() || !socket.connected;
 });
 
 document.getElementById('nameInput').addEventListener('keydown', (e) => {
@@ -265,9 +311,21 @@ document.getElementById('nameInput').addEventListener('keydown', (e) => {
 function joinGame() {
     const name = document.getElementById('nameInput').value.trim();
     if (!name) return;
+    if (!socket.connected) {
+        const el = document.getElementById('joinError');
+        el.textContent = 'Not connected to server. Please wait or refresh.';
+        el.style.display = 'block';
+        return;
+    }
     myName = name;
     document.getElementById('goBtn').disabled = true;
     socket.emit('player-join', { name: myName });
+    // Re-enable after 5s if no response (prevents permanently stuck button)
+    setTimeout(() => {
+        if (document.getElementById('joinScreen').classList.contains('active')) {
+            document.getElementById('goBtn').disabled = false;
+        }
+    }, 5000);
 }
 
 socket.on('join-success', ({ name, score }) => {
