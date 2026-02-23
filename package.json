@@ -1,0 +1,15 @@
+{
+  "name": "millionaire-game",
+  "version": "1.0.0",
+  "description": "Who Wants to Be a Millionaire - Network Edition",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "localtunnel": "^2.0.2",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.0"
+  }
+}
